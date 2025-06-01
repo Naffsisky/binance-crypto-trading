@@ -1,9 +1,8 @@
 const inquirer = require('inquirer')
 const { startSpotPriceStream } = require('./websocket/livePrice')
-
 const { getSpotUSDTBalance, getFuturesUSDTBalance, getSpotPrice, getFuturesPrice, getSpotAssets } = require('./utils/balancePrice')
-
 const { buySpot, sellSpot } = require('./utils/ordersSpot')
+const { predictAndAnalyze } = require('./utils/predictAnalyze')
 
 const coinList = require('./coinList.json')
 
@@ -13,7 +12,18 @@ async function menu() {
       type: 'list',
       name: 'choice',
       message: 'Pilih Menu:',
-      choices: ['1. Cek Saldo Spot', '2. Cek Saldo Futures', '3. Cek Harga Coin', '4. Cek Harga Coin Live (WebSocket)', '5. Cek Inisial Coin', '6. Buy Spot', '7. Sell Spot', '8. Portfolio Spot', '0. Keluar'],
+      choices: [
+        '1. Cek Saldo Spot',
+        '2. Cek Saldo Futures',
+        '3. Cek Harga Coin',
+        '4. Cek Harga Coin Live (WebSocket)',
+        '5. Cek Inisial Coin',
+        '6. Buy Spot',
+        '7. Sell Spot',
+        '8. Portfolio Spot',
+        '9. Prediksi & Strategi Teknikal',
+        '0. Keluar',
+      ],
     },
   ])
 
@@ -39,8 +49,11 @@ async function menu() {
     case '7. Sell Spot':
       await handleSellSpot()
       break
-    case '8. Portfolio Spot': // Handle portfolio
+    case '8. Portfolio Spot':
       await displaySpotPortfolio()
+      break
+    case '9. Prediksi & Strategi Teknikal':
+      await predictAndAnalyze()
       break
     case '0. Keluar':
       console.log('Sampai jumpa!\n')
@@ -157,7 +170,6 @@ async function displaySpotPortfolio() {
       )
     })
 
-    // Tampilkan total
     const totalColor = totalProfit >= 0 ? COLOR_GREEN : COLOR_RED
     console.log('\nTotal Nilai Portfolio: $' + totalValue.toFixed(2))
     console.log(`Total Profit: ${totalColor}$${totalProfit.toFixed(2)}${COLOR_RESET}`)
