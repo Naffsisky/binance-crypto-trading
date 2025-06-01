@@ -1,49 +1,122 @@
-require('dotenv').config()
-const inquirer = require('inquirer')
+const axios = require('axios')
+
 const { Spot } = require('@binance/connector')
 const { SMA, EMA, RSI, MACD, ATR, Stochastic, WilliamsR } = require('technicalindicators')
-
 const spotClient = new Spot(process.env.API_KEY, process.env.API_SECRET, {
   recvWindow: 60000,
   timestamp: Date.now,
 })
 
-async function predictAndAnalyze() {
-  const { symbol: rawSymbol } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'symbol',
-      message: 'Masukkan simbol (contoh: BTCUSDT):',
-      validate: (input) => !!input.trim() || 'Simbol tidak boleh kosong',
-    },
-  ])
+async function getLowPriceCoins() {
+  try {
+    // 1.a. Dapatkan semua simbol dari Binance
+    const response = await axios.get('https://api.binance.com/api/v3/exchangeInfo')
+    const symbols = response.data.symbols
 
-  const symbol = rawSymbol.trim().toUpperCase()
+    // 1.b. Filter hanya yang quoteAsset = 'USDT' dan status = 'TRADING'
+    const lowPriceCoins = symbols.filter((s) => s.quoteAsset === 'USDT' && s.status === 'TRADING' && !s.symbol.includes('UP') && !s.symbol.includes('DOWN'))
+
+    // 1.c. Ambil harga terkini untuk semua ticker sekaligus
+    const tickers = await axios.get('https://api.binance.com/api/v3/ticker/price')
+    const tickerMap = {}
+    tickers.data.forEach((t) => {
+      tickerMap[t.symbol] = parseFloat(t.price)
+    })
+
+    // 1.d. Gabungkan dan filter harga < 1
+    const result = lowPriceCoins
+      .map((coin) => ({
+        symbol: coin.symbol,
+        price: tickerMap[coin.symbol] || 0,
+      }))
+      .filter((c) => c.price > 0 && c.price < 1)
+      .sort((a, b) => b.price - a.price) // urutkan termahal ke termurah
+
+    console.log(`\nDitemukan ${result.length} coin dengan harga di bawah $1:`)
+    result.forEach((c) => console.log(`- ${c.symbol}: $${c.price.toFixed(8)}`))
+
+    return result
+  } catch (err) {
+    console.error('❌ Gagal mendapatkan data coin murah:', err.message)
+    return []
+  }
+}
+
+async function scanCheapCoins() {
+  // 3.a. Ambil daftar coin murah
+  const coins = await getLowPriceCoins()
+  if (coins.length === 0) {
+    console.log('\n❌ Tidak ada coin murah yang ditemukan untuk dianalisis.')
+    return
+  }
+
+  // 3.b. Siapkan array untuk menampung symbol berdasarkan rekomendasi
+  const strongBuyList = []
+  const buyList = []
+
+  // 3.c. Loop tiap coin, panggil predictAndAnalyzeSymbol, dan tangkap return value
+  for (const coin of coins) {
+    console.log('\n===============================')
+    console.log(`📈 Analisis untuk ${coin.symbol}`)
+    console.log('===============================')
+
+    const recommendation = await predictAndAnalyzeSymbol(coin.symbol)
+
+    // **CETAK hasil rekomendasi agar kelihatan debug-nya**
+    console.log(`➡️ Rekomendasi untuk ${coin.symbol}: ${recommendation}`)
+
+    // 3.d. Push ke array jika sesuai
+    if (recommendation === 'STRONG BUY') {
+      strongBuyList.push(coin.symbol)
+    } else if (recommendation === 'BUY') {
+      buyList.push(coin.symbol)
+    }
+  }
+
+  // 3.e. Tampilkan ringkasan akhir
+  console.log('\n🔍 Ringkasan Coin dengan Sinyal BUY / STRONG BUY:\n')
+
+  if (strongBuyList.length > 0) {
+    console.log('✅ STRONG BUY:')
+    strongBuyList.forEach((s) => console.log(`- ${s}`))
+  }
+
+  if (buyList.length > 0) {
+    console.log('\n🟡 BUY:')
+    buyList.forEach((s) => console.log(`- ${s}`))
+  }
+
+  if (strongBuyList.length === 0 && buyList.length === 0) {
+    console.log('Tidak ada coin dengan sinyal BUY atau STRONG BUY.')
+  }
+}
+
+async function predictAndAnalyzeSymbol(symbolInput) {
+  const symbol = symbolInput.trim().toUpperCase()
 
   try {
-    // Dapatkan harga saat ini
+    // 2.a. Dapatkan harga rata-rata sekarang
     const res = await spotClient.avgPrice(symbol)
     const currentPrice = parseFloat(res.data.price)
     const decimals = currentPrice < 1 ? 8 : 2
 
     console.log(`\n🏷️  Harga saat ini untuk ${symbol}: ${currentPrice.toFixed(decimals)} USDT`)
 
-    // Dapatkan data klines (candle) dengan timeframe lebih panjang
+    // 2.b. Dapatkan data klines 1h terakhir (limit 200)
     const klinesRes = await spotClient.klines(symbol, '1h', { limit: 200 })
     const klines = klinesRes.data
-
     if (!Array.isArray(klines) || klines.length < 100) {
-      console.log('\n⚠️  Data historis tidak cukup untuk analisis teknikal (minimal 100 candle)')
-      return
+      console.log('⚠️  Data historis tidak cukup (minimal 100 candle).')
+      return 'HOLD'
     }
 
-    // Ekstrak data untuk analisis
+    // 2.c. Ekstrak array closes, highs, lows, volumes
     const closes = klines.map((k) => parseFloat(k[4]))
     const highs = klines.map((k) => parseFloat(k[2]))
     const lows = klines.map((k) => parseFloat(k[3]))
     const volumes = klines.map((k) => parseFloat(k[5]))
 
-    // 1. Moving Averages
+    // 2.d. Hitung indikator teknikal
     const sma20 = SMA.calculate({ period: 20, values: closes }).pop()
     const sma50 = SMA.calculate({ period: 50, values: closes }).pop()
     const sma100 = SMA.calculate({ period: 100, values: closes }).pop()
@@ -51,7 +124,6 @@ async function predictAndAnalyze() {
     const ema26 = EMA.calculate({ period: 26, values: closes }).pop()
     const ema50 = EMA.calculate({ period: 50, values: closes }).pop()
 
-    // 2. Momentum Indicators
     const rsi = RSI.calculate({ period: 14, values: closes }).pop()
     const macd = MACD.calculate({
       values: closes,
@@ -75,7 +147,6 @@ async function predictAndAnalyze() {
       period: 14,
     }).pop()
 
-    // 3. Volatility & Volume
     const atr = ATR.calculate({
       high: highs,
       low: lows,
@@ -87,65 +158,11 @@ async function predictAndAnalyze() {
     const currentVolume = volumes[volumes.length - 1]
     const volumeRatio = currentVolume / volumeAvg20
 
-    // 4. Support & Resistance (Pivot Points)
+    // 2.e. Hitung Pivot Points & Ichimoku
     const pivot = calculatePivotPoints(highs, lows, closes)
-
-    // 5. Ichimoku Cloud (untuk analisis komprehensif)
     const ichimoku = calculateIchimoku(highs, lows, closes)
 
-    // Tampilkan hasil analisis
-    console.log('\n📊 ANALISIS TEKNIKAL LANJUTAN:')
-    console.log('-----------------------------------')
-
-    // Trend Analysis
-    console.log('\n🔍 TREND ANALYSIS:')
-    console.log(`- SMA 20: ${sma20.toFixed(decimals)}`)
-    console.log(`- SMA 50: ${sma50.toFixed(decimals)}`)
-    console.log(`- SMA 100: ${sma100.toFixed(decimals)}`)
-    console.log(`- EMA 12: ${ema12.toFixed(decimals)}`)
-    console.log(`- EMA 26: ${ema26.toFixed(decimals)}`)
-    console.log(`- EMA 50: ${ema50.toFixed(decimals)}`)
-
-    const trendStatus =
-      currentPrice > sma50 && sma50 > sma100 && ema12 > ema26
-        ? '📈 BULLISH STRONG'
-        : currentPrice > sma50 && sma50 > sma100
-        ? '📈 BULLISH'
-        : currentPrice < sma50 && sma50 < sma100 && ema12 < ema26
-        ? '📉 BEARISH STRONG'
-        : currentPrice < sma50 && sma50 < sma100
-        ? '📉 BEARISH'
-        : '↔️ SIDEWAYS'
-
-    console.log(`- TREND: ${trendStatus}`)
-    console.log(`- Ichimoku Cloud: ${ichimoku.signal}`)
-
-    // Momentum Analysis
-    console.log('\n⚡ MOMENTUM ANALYSIS:')
-    console.log(`- RSI (14): ${rsi.toFixed(2)} ${rsi > 70 ? '(OVERBOUGHT)' : rsi < 30 ? '(OVERSOLD)' : ''}`)
-    console.log(`- Stochastic: K=${stoch.k.toFixed(2)}, D=${stoch.d.toFixed(2)} ${stoch.k < 20 ? '(OVERSOLD)' : stoch.k > 80 ? '(OVERBOUGHT)' : ''}`)
-    console.log(`- Williams %R: ${williamsR.toFixed(2)} ${williamsR < -80 ? '(OVERSOLD)' : williamsR > -20 ? '(OVERBOUGHT)' : ''}`)
-    console.log(`- MACD: ${macd.MACD.toFixed(decimals)}`)
-    console.log(`- Signal: ${macd.signal.toFixed(decimals)}`)
-    console.log(`- Histogram: ${macd.histogram.toFixed(decimals)} ${macd.histogram > 0 ? '↑' : '↓'}`)
-    console.log(`- ATR (14): ${atr.toFixed(decimals)} (Volatilitas)`)
-
-    // Volume Analysis
-    console.log('\n📦 VOLUME ANALYSIS:')
-    console.log(`- Volume Terakhir: ${currentVolume.toFixed(2)}`)
-    console.log(`- Rata2 Volume (20): ${volumeAvg20.toFixed(2)}`)
-    console.log(`- Rasio Volume: ${volumeRatio.toFixed(2)}x ${volumeRatio > 1.5 ? '↑↑↑' : volumeRatio > 1.2 ? '↑↑' : volumeRatio < 0.8 ? '↓↓↓' : volumeRatio < 0.9 ? '↓↓' : ''}`)
-
-    // Support & Resistance
-    console.log('\n⛰️ SUPPORT & RESISTANCE:')
-    console.log(`- Support (S1): ${pivot.s1.toFixed(decimals)}`)
-    console.log(`- Pivot Point: ${pivot.pp.toFixed(decimals)}`)
-    console.log(`- Resistance (R1): ${pivot.r1.toFixed(decimals)}`)
-    console.log(`- Ichimoku Support: ${ichimoku.support.toFixed(decimals)}`)
-    console.log(`- Ichimoku Resistance: ${ichimoku.resistance.toFixed(decimals)}`)
-
-    // Ringkasan Sinyal
-    console.log('\n🚦 SIGNAL SUMMARY:')
+    // 2.f. Tampilkan hasil analisis teknikal (boleh di-skip kalau hanya mau ringkas)
     const signals = generateTradingSignals({
       price: currentPrice,
       sma20,
@@ -161,32 +178,38 @@ async function predictAndAnalyze() {
       pivot,
       ichimoku,
     })
-
     signals.forEach((s, i) => console.log(`${i + 1}. ${s.signal} - ${s.description}`))
 
-    // Rekomendasi berbasis sinyal
+    // 2.h. Hitung rekomendasi akhir berdasarkan jumlah sinyal BUY vs SELL
+    console.log('\n💡 REKOMENDASI:')
+    let rekomendasi = 'HOLD'
     const buySignals = signals.filter((s) => s.type === 'BUY').length
     const sellSignals = signals.filter((s) => s.type === 'SELL').length
-    const neutralSignals = signals.filter((s) => s.type === 'NEUTRAL').length
 
-    console.log('\n💡 REKOMENDASI:')
     if (buySignals > sellSignals + 2) {
       console.log('✅ STRONG BUY SIGNAL')
+      rekomendasi = 'STRONG BUY'
     } else if (buySignals > sellSignals) {
       console.log('🟢 BUY')
+      rekomendasi = 'BUY'
     } else if (sellSignals > buySignals + 2) {
-      console.log('❌ STRONG SELL SIGNAL')
+      console.log('❌ STRONG SELL')
+      rekomendasi = 'STRONG SELL'
     } else if (sellSignals > buySignals) {
       console.log('🔴 SELL')
+      rekomendasi = 'SELL'
     } else {
       console.log('➡️ HOLD (Tidak ada sinyal kuat)')
+      rekomendasi = 'HOLD'
     }
+
+    // **PENTING**: kembalikan string rekomendasi TANPA emoji, agar gampang di-compare
+    return rekomendasi
   } catch (err) {
-    console.error('\n❌ Gagal menganalisis:', err.response?.data || err.message)
+    console.error(`\n❌ Gagal menganalisis ${symbol}:`, err.response?.data || err.message)
+    return 'HOLD'
   }
 }
-
-// Helper Functions -----------------------------------------------------
 
 function calculatePivotPoints(highs, lows, closes) {
   const high = Math.max(...highs.slice(-24)) // High 24 jam terakhir
@@ -325,5 +348,5 @@ function generateTradingSignals(data) {
 }
 
 module.exports = {
-  predictAndAnalyze,
+  scanCheapCoins,
 }

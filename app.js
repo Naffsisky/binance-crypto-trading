@@ -3,6 +3,7 @@ const { startSpotPriceStream } = require('./websocket/livePrice')
 const { getSpotUSDTBalance, getFuturesUSDTBalance, getSpotPrice, getFuturesPrice, getSpotAssets } = require('./utils/balancePrice')
 const { buySpot, sellSpot } = require('./utils/ordersSpot')
 const { predictAndAnalyze } = require('./utils/predictAnalyze')
+const { scanCheapCoins } = require('./scanner/cheapCoin')
 
 const coinList = require('./coinList.json')
 
@@ -22,6 +23,7 @@ async function menu() {
         '7. Sell Spot',
         '8. Portfolio Spot',
         '9. Prediksi & Strategi Teknikal',
+        '10. Scan Bullish Coins (<$1)',
         '0. Keluar',
       ],
     },
@@ -54,6 +56,9 @@ async function menu() {
       break
     case '9. Prediksi & Strategi Teknikal':
       await predictAndAnalyze()
+      break
+    case '10. Scan Bullish Coins (<$1)':
+      await scanCheapCoins()
       break
     case '0. Keluar':
       console.log('Sampai jumpa!\n')
