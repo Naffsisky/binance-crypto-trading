@@ -78,7 +78,7 @@ async function checkCoinPrice() {
     {
       type: 'input',
       name: 'symbols',
-      message: 'Masukkan coin (pisahkan dengan koma), contoh: BTC,ETH,SOL',
+      message: 'Masukkan coin (pisahkan dengan koma), contoh: BTC,ETH,SOL:',
     },
   ])
 
@@ -103,7 +103,7 @@ async function livePriceViaWebSocket() {
     {
       type: 'input',
       name: 'symbols',
-      message: 'Masukkan coin (misal: BTC,ETH,SOL)',
+      message: 'Masukkan coin (misal: BTC,ETH,SOL):',
     },
   ])
 
