@@ -1,11 +1,14 @@
 const inquirer = require('inquirer')
 const { startSpotPriceStream } = require('./websocket/livePrice')
-const { getSpotUSDTBalance, getFuturesUSDTBalance, getSpotPrice, getFuturesPrice, getSpotAssets } = require('./utils/balancePrice')
+const { getSpotUSDTBalance, getFuturesUSDTBalance, getSpotPrice, getFuturesPrice, getSpotAssets, fetchExchangeInfo } = require('./utils/balancePrice')
 const { buySpot, sellSpot } = require('./utils/ordersSpot')
 const { predictAndAnalyze } = require('./utils/predictAnalyze')
 const { scanCheapCoins } = require('./scanner/cheapCoin')
 const { scanMediumCoins } = require('./scanner/mediumCoin')
 const { scanHighCoins } = require('./scanner/highCoin')
+const { scanScalpingSignal } = require('./utils/futures/scalpingEngine')
+const { calculatePositionSize, calculateLeverage } = require('./utils/futures/riskManager')
+const { buyFutures, sellFutures, setLeverage } = require('./utils/futures/ordersFutures')
 
 const coinList = require('./coinList.json')
 
@@ -26,6 +29,7 @@ async function menu() {
         '8. Portfolio Spot',
         '9. Prediksi & Strategi Teknikal',
         '10. Scan Bullish Coins',
+        '11. Scalping Futures',
         '0. Keluar',
       ],
     },
@@ -61,6 +65,9 @@ async function menu() {
       break
     case '10. Scan Bullish Coins':
       await scanner()
+      break
+    case '11. Scalping Futures':
+      await handleScalpingFutures()
       break
     case '0. Keluar':
       console.log('Sampai jumpa!\n')
@@ -211,6 +218,144 @@ async function scanner() {
 
   await scanner()
   return
+}
+
+async function handleScalpingFutures() {
+  try {
+    const answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'nominal',
+        message: 'Modal USDT total:',
+        validate: (v) => !isNaN(v) && v > 0,
+      },
+      {
+        type: 'input',
+        name: 'riskPercent',
+        message: 'Risiko per trade (% dari modal efektif):',
+        default: '1',
+        validate: (v) => v > 0 && v <= 5,
+      },
+      {
+        type: 'input',
+        name: 'maxPositions',
+        message: 'Maksimal jumlah posisi:',
+        default: '5',
+      },
+    ])
+
+    const riskPercent = parseFloat(answers.riskPercent)
+    const nominalTotal = parseFloat(answers.nominal)
+    const maxPositions = parseInt(answers.maxPositions)
+
+    // Dapatkan semua simbol futures
+    const info = await fetchExchangeInfo()
+    const allSymbols = info.symbols.filter((s) => s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL').map((s) => s.symbol)
+
+    console.log(`Memulai analisis ${allSymbols.length} simbol futures...`)
+
+    // Scan semua simbol dan dapatkan sinyal terbaik
+    const topSignals = await scanTopSignals(allSymbols, maxPositions)
+
+    if (topSignals.length === 0) {
+      console.log('Tidak ditemukan sinyal trading yang memenuhi kriteria')
+      return
+    }
+
+    // Eksekusi order
+    const orders = []
+    for (const signal of topSignals) {
+      try {
+        // Hitung ukuran posisi dengan leverage
+        const positionSize = calculatePositionSize(nominalTotal / topSignals.length, riskPercent, signal.price, signal.stopLoss, signal.leverage)
+
+        // Set leverage
+        await setLeverage(signal.symbol, signal.leverage)
+
+        // Eksekusi order sesuai arah sinyal
+        let orderResult
+        if (signal.direction === 'BULLISH') {
+          orderResult = await buyFutures(signal.symbol, positionSize)
+        } else {
+          orderResult = await sellFutures(signal.symbol, positionSize)
+        }
+
+        orders.push({
+          symbol: signal.symbol,
+          side: signal.direction === 'BULLISH' ? 'BUY' : 'SELL',
+          qty: positionSize,
+          price: signal.price,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit,
+          leverage: signal.leverage,
+          score: signal.score,
+        })
+
+        console.log(`Mencoba set leverage untuk ${signal.symbol}...`)
+        try {
+          await setLeverage(signal.symbol.replace('USDT', ''), signal.leverage)
+          console.log(`Set leverage x${signal.leverage} berhasil`)
+        } catch (err) {
+          console.error(`Gagal set leverage: ${err.message}`)
+          continue
+        }
+
+        console.log(`Order: ${signal.symbol} ${signal.direction} ${positionSize.toFixed(4)} @ ${signal.price}`)
+      } catch (err) {
+        console.error(`Gagal order ${signal.symbol}:`, err.message)
+      }
+    }
+
+    // Tampilkan ringkasan
+    console.log('\n=== Eksekusi Trading ===')
+
+    if (orders.length === 0) {
+      console.log('Tidak ada order yang berhasil dieksekusi')
+    } else {
+      const tableData = orders.map((o) => ({
+        Symbol: o.symbol,
+        Arah: o.side,
+        Jumlah: o.qty.toFixed(4),
+        Harga: o.price.toFixed(6),
+        'Stop Loss': o.stopLoss.toFixed(6),
+        'Take Profit': o.takeProfit.toFixed(6),
+        Leverage: `x${o.leverage}`,
+        Skor: o.score.toFixed(2),
+      }))
+
+      // Tampilkan tabel
+      console.table(tableData)
+    }
+  } catch (err) {
+    console.error('Error:', err)
+  }
+}
+
+// Fungsi baru untuk scan sinyal terbaik
+async function scanTopSignals(symbols, maxSignals = 5) {
+  const allSignals = []
+
+  // Batasi paralelisasi untuk hindari rate limit
+  const BATCH_SIZE = 5
+  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+    const batch = symbols.slice(i, i + BATCH_SIZE)
+    const batchPromises = batch.map((symbol) =>
+      scanScalpingSignal(symbol).catch((err) => {
+        console.error(`Error scanning ${symbol}:`, err.message)
+        return null
+      })
+    )
+
+    const batchResults = await Promise.all(batchPromises)
+    const validSignals = batchResults.filter((s) => s !== null && s.score >= 4.0)
+    allSignals.push(...validSignals)
+
+    console.log(`Proses: ${Math.min(i + BATCH_SIZE, symbols.length)}/${symbols.length} | Sinyal ditemukan: ${validSignals.length}`)
+  }
+
+  // Urutkan dan ambil yang terbaik
+  allSignals.sort((a, b) => b.score - a.score)
+  return allSignals.slice(0, maxSignals)
 }
 
 menu()

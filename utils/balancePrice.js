@@ -1,12 +1,14 @@
 require('dotenv').config()
 const { Spot } = require('@binance/connector')
 const Binance = require('binance-api-node').default
+const BASE_URL = 'https://fapi.binance.com'
+const axios = require('axios')
 
 const spotClient = new Spot(process.env.API_KEY, process.env.API_SECRET)
 const futuresClient = Binance({
   apiKey: process.env.API_KEY,
   apiSecret: process.env.API_SECRET,
-  httpBase: 'https://fapi.binance.com',
+  httpBase: BASE_URL,
 })
 
 // === SPOT ===
@@ -135,10 +137,26 @@ async function getFuturesPrice(symbol) {
   }
 }
 
+async function fetchExchangeInfo() {
+  try {
+    const info = await futuresClient.exchangeInfo()
+    return info
+  } catch (err) {
+    try {
+      const response = await axios.get(`${BASE_URL}/fapi/v1/exchangeInfo`)
+      return response.data
+    } catch (fallbackErr) {
+      const errorMsg = fallbackErr.response?.data?.msg || fallbackErr.message
+      throw new Error(`fetchExchangeInfo failed: ${errorMsg}`)
+    }
+  }
+}
+
 module.exports = {
   getSpotUSDTBalance,
   getFuturesUSDTBalance,
   getSpotPrice,
   getFuturesPrice,
   getSpotAssets,
+  fetchExchangeInfo,
 }
