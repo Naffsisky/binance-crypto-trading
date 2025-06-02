@@ -32,9 +32,10 @@ async function predictAndAnalyze() {
     const klinesRes = await spotClient.klines(symbol, '1h', { limit: 200 })
     const klines = klinesRes.data
 
-    if (!Array.isArray(klines) || klines.length < 100) {
-      console.log('\n⚠️  Data historis tidak cukup untuk analisis teknikal (minimal 100 candle)')
-      return
+    const MIN_CANDLES = 150 // Untuk indikator periode panjang (SMA100, Ichimoku)
+    if (klines.length < MIN_CANDLES) {
+      const missing = MIN_CANDLES - klines.length
+      console.log(`\n⚠️  Data kurang ${missing} candle. Menggunakan data maksimal yang tersedia`)
     }
 
     // Ekstrak data untuk analisis
@@ -42,6 +43,27 @@ async function predictAndAnalyze() {
     const highs = klines.map((k) => parseFloat(k[2]))
     const lows = klines.map((k) => parseFloat(k[3]))
     const volumes = klines.map((k) => parseFloat(k[5]))
+    const opens = klines.map((k) => parseFloat(k[1]))
+    const lastCandle = {
+      open: parseFloat(klines[klines.length - 1][1]),
+      high: parseFloat(klines[klines.length - 1][2]),
+      low: parseFloat(klines[klines.length - 1][3]),
+      close: closes[closes.length - 1],
+    }
+    const isBullishEngulfing =
+      closes[closes.length - 2] < opens[opens.length - 2] && // Bearish sebelumnya
+      lastCandle.close > lastCandle.open && // Bullish sekarang
+      lastCandle.close > opens[opens.length - 2] && // Close di atas open sebelumnya
+      lastCandle.open < closes[closes.length - 2] // Open di bawah close sebelumnya
+
+    if (isBullishEngulfing) {
+      signals.push({
+        type: 'BUY',
+        signal: 'BULLISH ENGULFING',
+        description: 'Pola candlestick reversal bullish',
+        weight: 1.4,
+      })
+    }
 
     // 1. Moving Averages
     const sma20 = SMA.calculate({ period: 20, values: closes }).pop()
@@ -78,6 +100,20 @@ async function predictAndAnalyze() {
       close: closes,
       period: 14,
     }).pop()
+
+    const vwma = (period) => {
+      let sum = 0
+      let volSum = 0
+      for (let i = closes.length - period; i < closes.length; i++) {
+        sum += closes[i] * volumes[i]
+        volSum += volumes[i]
+      }
+      return sum / volSum
+    }
+
+    const vwma12 = vwma(12)
+    const vwma26 = vwma(26)
+    const vmacd = vwma12 - vwma26
 
     // 3. Volatility & Volume
     const atr = ATR.calculate({
@@ -192,6 +228,21 @@ async function predictAndAnalyze() {
     console.log(`- Resistance (R1): ${pivot.r1.toFixed(decimals)}`)
     console.log(`- Ichimoku Support: ${ichimoku.support.toFixed(decimals)}`)
     console.log(`- Ichimoku Resistance: ${ichimoku.resistance.toFixed(decimals)}`)
+
+    // Volume Weighted Analysis
+    console.log('\n📊 VOLUME WEIGHTED ANALYSIS:')
+    console.log(`- Volume Weighted MACD: ${vmacd.toFixed(decimals)}`)
+    console.log(`- Volume Weighted MA 12: ${vwma12.toFixed(decimals)}`)
+    console.log(`- Volume Weighted MA 26: ${vwma26.toFixed(decimals)}`)
+
+    // Print last candle details
+    console.log('\n📈 LAST CANDLE DETAILS:')
+    console.log(`- Harga Terakhir: ${currentPrice.toFixed(decimals)}`)
+    console.log(`- Harga Open: ${lastCandle.open.toFixed(decimals)}`)
+    console.log(`- Harga High: ${lastCandle.high.toFixed(decimals)}`)
+    console.log(`- Harga Low: ${lastCandle.low.toFixed(decimals)}`)
+    console.log(`- Harga Close: ${lastCandle.close.toFixed(decimals)}`)
+    console.log(`- Bullish Engulfing: ${isBullishEngulfing ? 'YA' : 'TIDAK'}`)
 
     // Ringkasan Sinyal
     console.log('\n🚦 SIGNAL SUMMARY:')
@@ -378,6 +429,17 @@ function generateTradingSignals(data) {
     })
   }
 
+  if (data.price > data.ichimoku.resistance) {
+    if (data.volumeRatio > 1.3) {
+      signals.push({
+        type: 'BUY',
+        signal: 'BREAKOUT KONFIRMASI VOLUME',
+        description: 'Breakout resistance dengan volume tinggi',
+        weight: 1.6,
+      })
+    }
+  }
+
   // Ichimoku signals
   if (data.price > data.ichimoku.resistance && data.ichimoku.signal.includes('BULLISH')) {
     signals.push({
@@ -406,11 +468,15 @@ function generateTradingSignals(data) {
   }
 
   // Fibonacci Support Signal
-  if (price <= fib.level382 && price >= fib.level500) {
+  const fibRange = fib.level382 - fib.level500
+  const inFibZone = price >= fib.level500 - 0.05 * fibRange && price <= fib.level382 + 0.05 * fibRange
+
+  if (inFibZone && data.volumeRatio > 1.2) {
     signals.push({
       type: 'BUY',
-      signal: 'FIBONACCI SUPPORT',
-      description: `Harga di area support (${fib.level500.toFixed(8)} - ${fib.level382.toFixed(8)})`,
+      signal: 'FIBONACCI SUPPORT + VOLUME',
+      description: `Harga di area Fibonacci (${fib.level500.toFixed(8)}-${fib.level382.toFixed(8)}) dengan volume konfirmasi`,
+      weight: 1.3,
     })
   }
 
@@ -448,8 +514,27 @@ function generateTradingSignals(data) {
     if (s.type === 'BUY') score += weight
     if (s.type === 'SELL') score -= weight
   })
+
   score = Math.round(score * 10) / 10
   console.log(`\n🔢 TOTAL SCORE: ${score.toFixed(8)}`)
+
+  const calculateRisk = () => {
+    const stopLoss = Math.min(data.pivot.s1, data.bb.lower, data.fib.level500)
+
+    const riskRewardRatio = data.price - stopLoss > 3 * (data.pivot.r1 - data.price) ? 'TINGGI (1:3+)' : 'STANDAR (1:2)'
+
+    return {
+      stopLoss: stopLoss.toFixed(8),
+      takeProfit: data.pivot.r1.toFixed(8),
+      riskRewardRatio,
+    }
+  }
+
+  const risk = calculateRisk()
+  console.log('\n🛡️  MANAJEMEN RISIKO:')
+  console.log(`- Stop Loss: ${risk.stopLoss}`)
+  console.log(`- Take Profit: ${risk.takeProfit}`)
+  console.log(`- Risk/Reward: ${risk.riskRewardRatio}`)
 
   console.log('\n💡 REKOMENDASI BERDASARKAN SCORING:')
   if (score > 3) console.log('✅ STRONG BUY SIGNAL')
