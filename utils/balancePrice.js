@@ -89,6 +89,10 @@ async function getSpotAssets() {
       }
 
       const avgPrice = totalQty > 0 ? totalCost / totalQty : currentPrice
+
+      const assetValue = balance * currentPrice
+      if (assetValue < 0.4) continue
+
       const profitUSDT = (currentPrice - avgPrice) * balance
       const profitPercent = avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0
 

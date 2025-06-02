@@ -4,6 +4,8 @@ const { getSpotUSDTBalance, getFuturesUSDTBalance, getSpotPrice, getFuturesPrice
 const { buySpot, sellSpot } = require('./utils/ordersSpot')
 const { predictAndAnalyze } = require('./utils/predictAnalyze')
 const { scanCheapCoins } = require('./scanner/cheapCoin')
+const { scanMediumCoins } = require('./scanner/mediumCoin')
+const { scanHighCoins } = require('./scanner/highCoin')
 
 const coinList = require('./coinList.json')
 
@@ -23,7 +25,7 @@ async function menu() {
         '7. Sell Spot',
         '8. Portfolio Spot',
         '9. Prediksi & Strategi Teknikal',
-        '10. Scan Bullish Coins (<$1)',
+        '10. Scan Bullish Coins',
         '0. Keluar',
       ],
     },
@@ -57,8 +59,8 @@ async function menu() {
     case '9. Prediksi & Strategi Teknikal':
       await predictAndAnalyze()
       break
-    case '10. Scan Bullish Coins (<$1)':
-      await scanCheapCoins()
+    case '10. Scan Bullish Coins':
+      await scanner()
       break
     case '0. Keluar':
       console.log('Sampai jumpa!\n')
@@ -181,6 +183,34 @@ async function displaySpotPortfolio() {
   } catch (err) {
     console.error('Error menampilkan portfolio:', err)
   }
+}
+
+async function scanner() {
+  const { choice } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'choice',
+      message: 'Pilih Scanner:',
+      choices: ['1. Scan Bullish Coins (<$1)', '2. Scan Medium Coins ($1-$100)', '3. Scan Expensive Coins ($100+)', '0. Kembali ke Menu Utama'],
+    },
+  ])
+
+  switch (choice) {
+    case '1. Scan Bullish Coins (<$1)':
+      await scanCheapCoins()
+      break
+    case '2. Scan Medium Coins ($1-$100)':
+      await scanMediumCoins()
+      break
+    case '3. Scan Expensive Coins ($100+)':
+      await scanHighCoins()
+      break
+    case '0. Kembali ke Menu Utama':
+      return
+  }
+
+  await scanner()
+  return
 }
 
 menu()
