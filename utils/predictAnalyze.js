@@ -1,7 +1,7 @@
 require('dotenv').config()
 const inquirer = require('inquirer')
 const { Spot } = require('@binance/connector')
-const { SMA, EMA, RSI, MACD, ATR, Stochastic, WilliamsR } = require('technicalindicators')
+const { SMA, EMA, RSI, MACD, ATR, Stochastic, WilliamsR, BollingerBands, ADX } = require('technicalindicators')
 
 const spotClient = new Spot(process.env.API_KEY, process.env.API_SECRET, {
   recvWindow: 60000,
@@ -52,13 +52,17 @@ async function predictAndAnalyze() {
     const ema50 = EMA.calculate({ period: 50, values: closes }).pop()
 
     // 2. Momentum Indicators
-    const rsi = RSI.calculate({ period: 14, values: closes }).pop()
-    const macd = MACD.calculate({
-      values: closes,
-      fastPeriod: 12,
-      slowPeriod: 26,
-      signalPeriod: 9,
-    }).pop()
+    const rsi = getLastValue(RSI.calculate, { period: 14, values: closes }, 50)
+    const macd = getLastValue(
+      MACD.calculate,
+      {
+        values: closes,
+        fastPeriod: 12,
+        slowPeriod: 26,
+        signalPeriod: 9,
+      },
+      { MACD: 0, signal: 0, histogram: 0 }
+    )
 
     const stoch = Stochastic.calculate({
       high: highs,
@@ -93,6 +97,34 @@ async function predictAndAnalyze() {
     // 5. Ichimoku Cloud (untuk analisis komprehensif)
     const ichimoku = calculateIchimoku(highs, lows, closes)
 
+    // 6. Fibonacci Retracement
+    const fib = calculateFibonacciRetracement(highs, lows)
+
+    // 7. Bollinger Bands
+    const bb = getLastValue(
+      BollingerBands.calculate,
+      {
+        period: 20,
+        values: closes,
+        stdDev: 2,
+      },
+      { upper: 0, middle: 0, lower: 0 }
+    )
+
+    // 8. ADX (Average Directional Index)
+    const adxResult = getLastValue(
+      ADX.calculate,
+      {
+        high: highs,
+        low: lows,
+        close: closes,
+        period: 14,
+      },
+      { adx: 0 }
+    )
+
+    const adx = adxResult.adx || 0
+
     // Tampilkan hasil analisis
     console.log('\n📊 ANALISIS TEKNIKAL LANJUTAN:')
     console.log('-----------------------------------')
@@ -119,6 +151,23 @@ async function predictAndAnalyze() {
 
     console.log(`- TREND: ${trendStatus}`)
     console.log(`- Ichimoku Cloud: ${ichimoku.signal}`)
+
+    // Fibonacci & Bollinger Bands
+    console.log('\n📐 FIBONACCI LEVELS:')
+    console.log(`- 0.0%: ${fib.level0.toFixed(decimals)}`)
+    console.log(`- 23.6%: ${fib.level236.toFixed(decimals)}`)
+    console.log(`- 38.2%: ${fib.level382.toFixed(decimals)}`)
+    console.log(`- 50.0%: ${fib.level500.toFixed(decimals)}`)
+    console.log(`- 61.8%: ${fib.level618.toFixed(decimals)}`)
+
+    console.log('\n📊 BOLLINGER BANDS (20,2):')
+    console.log(`- Upper: ${bb.upper.toFixed(decimals)}`)
+    console.log(`- Middle: ${bb.middle.toFixed(decimals)}`)
+    console.log(`- Lower: ${bb.lower.toFixed(decimals)}`)
+    console.log(`- Harga vs Bands: ${currentPrice > bb.upper ? 'DI ATAS' : currentPrice < bb.lower ? 'DI BAWAH' : 'DI TENGAH'}`)
+
+    console.log('\n🌀 TREND STRENGTH (ADX):')
+    console.log(`- ADX (14): ${adx.toFixed(2)} ${adx > 25 ? '(TREND KUAT)' : adx < 20 ? '(TREND LEMAH)' : ''}`)
 
     // Momentum Analysis
     console.log('\n⚡ MOMENTUM ANALYSIS:')
@@ -160,6 +209,10 @@ async function predictAndAnalyze() {
       volumeRatio,
       pivot,
       ichimoku,
+      fib,
+      bb,
+      adx,
+      trendDirection: currentPrice > sma50 ? 'up' : 'down',
     })
 
     signals.forEach((s, i) => console.log(`${i + 1}. ${s.signal} - ${s.description}`))
@@ -179,6 +232,7 @@ async function predictAndAnalyze() {
     } else if (sellSignals > buySignals) {
       console.log('🔴 SELL')
     } else {
+      console.log(neutralSignals > 0 ? `🔵 ${neutralSignals} sinyal netral` : '')
       console.log('➡️ HOLD (Tidak ada sinyal kuat)')
     }
   } catch (err) {
@@ -240,8 +294,46 @@ function calculateIchimoku(highs, lows, closes) {
   }
 }
 
+function calculateFibonacciRetracement(highs, lows) {
+  const period = 50 // Gunakan 50 candle terakhir
+  const swingHigh = Math.max(...highs.slice(-period))
+  const swingLow = Math.min(...lows.slice(-period))
+  const diff = swingHigh - swingLow
+
+  return {
+    level0: swingHigh,
+    level236: swingHigh - diff * 0.236,
+    level382: swingHigh - diff * 0.382,
+    level500: swingHigh - diff * 0.5,
+    level618: swingHigh - diff * 0.618,
+    level786: swingHigh - diff * 0.786,
+    level100: swingLow,
+  }
+}
+
+// Fungsi aman untuk mengambil nilai terakhir indikator
+function getLastValue(calcFunction, params, defaultValue = 0) {
+  try {
+    const results = calcFunction(params)
+    return results.length > 0 ? results[results.length - 1] : defaultValue
+  } catch (e) {
+    console.error(`Error calculating ${calcFunction.name}:`, e)
+    return defaultValue
+  }
+}
+
 function generateTradingSignals(data) {
   const signals = []
+  const { price, fib, bb, adx } = data
+
+  const weightedSignals = {
+    TREND: 1.5,
+    ICHIMOKU: 1.2,
+    FIBONACCI: 1.0,
+    BOLLINGER: 0.9,
+    VOLUME: 0.8,
+    MOMENTUM: 0.7,
+  }
 
   // Trend signals
   if (data.price > data.sma50 && data.sma50 > data.sma100) {
@@ -313,6 +405,33 @@ function generateTradingSignals(data) {
     })
   }
 
+  // Fibonacci Support Signal
+  if (price <= fib.level382 && price >= fib.level500) {
+    signals.push({
+      type: 'BUY',
+      signal: 'FIBONACCI SUPPORT',
+      description: `Harga di area support (${fib.level500.toFixed(8)} - ${fib.level382.toFixed(8)})`,
+    })
+  }
+
+  // Bollinger Bands Signal
+  if (price < bb.lower && bb.lower > 0) {
+    signals.push({
+      type: 'BUY',
+      signal: 'BOLLINGER OVERSOLD',
+      description: `Harga menyentuh lower band (${bb.lower.toFixed(8)})`,
+    })
+  }
+
+  // ADX Trend Strength
+  if (adx > 25) {
+    signals.push({
+      type: data.trendDirection === 'up' ? 'BUY' : 'SELL',
+      signal: `TREND KUAT (ADX ${adx.toFixed(8)})`,
+      description: 'Trend kuat diikuti momentum',
+    })
+  }
+
   if (signals.length === 0) {
     signals.push({
       type: 'NEUTRAL',
@@ -320,6 +439,24 @@ function generateTradingSignals(data) {
       description: 'Pasar sideways atau konflik indikator',
     })
   }
+
+  let score = 0
+  signals.forEach((s) => {
+    const signalType = s.signal.split(' ')[0]
+    const weight = weightedSignals[signalType] || 1.0
+
+    if (s.type === 'BUY') score += weight
+    if (s.type === 'SELL') score -= weight
+  })
+  score = Math.round(score * 10) / 10
+  console.log(`\n🔢 TOTAL SCORE: ${score.toFixed(8)}`)
+
+  console.log('\n💡 REKOMENDASI BERDASARKAN SCORING:')
+  if (score > 3) console.log('✅ STRONG BUY SIGNAL')
+  else if (score > 1) console.log('🟢 BUY')
+  else if (score < -3) console.log('❌ STRONG SELL SIGNAL')
+  else if (score < -1) console.log('🔴 SELL')
+  else console.log('➡️ HOLD (Netral)')
 
   return signals
 }
