@@ -1,4 +1,5 @@
 const Binance = require('binance-api-node').default
+const axios = require('axios')
 
 const futuresClient = Binance({
   apiKey: process.env.API_KEY,
@@ -8,32 +9,17 @@ const futuresClient = Binance({
 
 async function setLeverage(symbol, leverage) {
   try {
-    // Pastikan leverage berupa integer
     leverage = parseInt(leverage)
-
-    // Gunakan simbol tanpa modifikasi
     await futuresClient.futuresLeverage({ symbol, leverage })
     return true
   } catch (err) {
-    // Tangani error khusus untuk coin seperti 1000PEPEUSDT
-    if (err.message.includes('No such symbol')) {
-      try {
-        // Coba format tanpa angka depan
-        const altSymbol = symbol.replace(/^\d+/, '')
-        await futuresClient.futuresLeverage({ symbol: altSymbol, leverage })
-        console.log(`[LEVERAGE] Used alternative symbol: ${altSymbol}`)
-        return true
-      } catch (altErr) {
-        throw new Error(`Gagal set leverage: ${altErr.message}`)
-      }
-    }
     throw new Error(`Gagal set leverage: ${err.message}`)
   }
 }
 
 async function buyFutures(symbol, quantity) {
   try {
-    // Dapatkan info simbol untuk presisi quantity
+    // Dapatkan info simbol
     const exchangeInfo = await fetchExchangeInfo()
     const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol)
 
@@ -45,17 +31,24 @@ async function buyFutures(symbol, quantity) {
     const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE')
     const stepSize = parseFloat(lotSizeFilter.stepSize)
 
-    // Hitung quantity dengan presisi yang benar
+    // Hitung presisi dan sesuaikan quantity
     const precision = Math.max(0, Math.log10(1 / stepSize))
     const adjustedQty = parseFloat(quantity.toFixed(precision))
 
-    return await futuresClient.futuresMarketBuy({ symbol, quantity: adjustedQty })
+    // Gunakan fungsi yang benar: futuresOrder dengan type MARKET
+    const order = await futuresClient.futuresOrder({
+      symbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: adjustedQty,
+    })
+
+    return order
   } catch (err) {
     throw new Error(`Gagal BUY: ${err.response?.data?.msg || err.message}`)
   }
 }
 
-// Fungsi serupa untuk sellFutures
 async function sellFutures(symbol, quantity) {
   try {
     const exchangeInfo = await fetchExchangeInfo()
@@ -70,9 +63,25 @@ async function sellFutures(symbol, quantity) {
     const precision = Math.max(0, Math.log10(1 / stepSize))
     const adjustedQty = parseFloat(quantity.toFixed(precision))
 
-    return await futuresClient.futuresMarketSell({ symbol, quantity: adjustedQty })
+    const order = await futuresClient.futuresOrder({
+      symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: adjustedQty,
+    })
+
+    return order
   } catch (err) {
     throw new Error(`Gagal SELL: ${err.response?.data?.msg || err.message}`)
+  }
+}
+
+async function fetchExchangeInfo() {
+  try {
+    const response = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo')
+    return response.data
+  } catch (err) {
+    throw new Error(`fetchExchangeInfo failed: ${err.message}`)
   }
 }
 
@@ -116,15 +125,6 @@ async function closePosition(symbol, quantity) {
     }
   } catch (err) {
     throw new Error(`Failed to close position: ${err.response?.data?.msg || err.message}`)
-  }
-}
-
-async function fetchExchangeInfo() {
-  try {
-    const response = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo')
-    return response.data
-  } catch (err) {
-    throw new Error(`fetchExchangeInfo failed: ${err.message}`)
   }
 }
 

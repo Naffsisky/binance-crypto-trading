@@ -63,24 +63,31 @@ async function predictDirection(symbol, timeframe) {
 
 async function openLongPosition(state, entryPrice, atr) {
   try {
-    // Penanganan khusus untuk coin seperti 1000PEPEUSDT
     const isMultiplierCoin = state.symbol.startsWith('1000')
+    let leverage = 10 // Default leverage rendah untuk coin kecil
 
-    // Hitung leverage dengan aman
-    let leverage = 20 // Default untuk coin kecil
-    const leverageRatio = atr / entryPrice
-
-    if (leverageRatio > 0 && !isMultiplierCoin) {
-      leverage = Math.min(20, Math.max(5, Math.floor(0.05 / leverageRatio)))
+    // Hitung leverage hanya untuk coin non-multiplier
+    if (!isMultiplierCoin) {
+      const leverageRatio = atr / entryPrice
+      if (leverageRatio > 0) {
+        leverage = Math.min(20, Math.max(5, Math.floor(0.05 / leverageRatio)))
+      }
     }
 
     console.log(`[LEVERAGE] Setting leverage to ${leverage} for ${state.symbol}`)
     await setLeverage(state.symbol, leverage)
 
     const stopLoss = entryPrice - atr * 1.5
-    const positionSize = calculatePositionSize(state.tradingCapital, state.riskPercent, entryPrice, stopLoss, leverage)
 
-    console.log(`[ORDER] Buying ${positionSize.toFixed(8)} ${state.symbol}`)
+    // Gunakan fungsi calculatePositionSize yang diperbarui
+    const positionSize = await calculatePositionSize(state.symbol, state.tradingCapital, state.riskPercent, entryPrice, stopLoss, leverage)
+
+    // Periksa jika positionSize valid
+    if (positionSize <= 0) {
+      throw new Error(`Invalid position size: ${positionSize}`)
+    }
+
+    console.log(`[ORDER] Buying ${positionSize} ${state.symbol}`)
     await buyFutures(state.symbol, positionSize)
 
     state.position = {
@@ -93,7 +100,7 @@ async function openLongPosition(state, entryPrice, atr) {
       openTime: Date.now(),
     }
 
-    console.log(`LONG position opened: ${positionSize.toFixed(8)} @ ${entryPrice}`)
+    console.log(`LONG position opened: ${positionSize} @ ${entryPrice}`)
   } catch (err) {
     console.error(`[ERROR] Failed to open LONG position: ${err.message}`)
     throw err
