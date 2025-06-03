@@ -28,8 +28,16 @@ async function adjustStopLoss(symbol, position, priceData) {
   }
 }
 
+function calculateNetProfit(entryPrice, exitPrice, quantity, feeRate) {
+  const profit = (exitPrice - entryPrice) * quantity
+  const entryFee = quantity * entryPrice * feeRate
+  const exitFee = quantity * exitPrice * feeRate
+  return profit - entryFee - exitFee
+}
+
 module.exports = {
   calculatePositionSize,
   calculateLeverage,
   adjustStopLoss,
+  calculateNetProfit,
 }

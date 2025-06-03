@@ -9,6 +9,7 @@ const { scanHighCoins } = require('./scanner/highCoin')
 const { scanScalpingSignal } = require('./utils/futures/scalpingEngine')
 const { calculatePositionSize, calculateLeverage } = require('./utils/futures/riskManager')
 const { buyFutures, sellFutures, setLeverage } = require('./utils/futures/ordersFutures')
+const { predictDirection, openLongPosition, openShortPosition, monitorPosition } = require('./utils/futures/liveScalping')
 
 const coinList = require('./coinList.json')
 
@@ -30,6 +31,7 @@ async function menu() {
         '9. Prediksi & Strategi Teknikal',
         '10. Scan Bullish Coins',
         '11. Scalping Futures',
+        '12. Live Scalping Futures',
         '0. Keluar',
       ],
     },
@@ -68,6 +70,9 @@ async function menu() {
       break
     case '11. Scalping Futures':
       await handleScalpingFutures()
+      break
+    case '12. Live Scalping Futures':
+      await handleLiveScalping()
       break
     case '0. Keluar':
       console.log('Sampai jumpa!\n')
@@ -345,6 +350,85 @@ async function scanTopSignals(symbols, maxSignals = 5) {
 
   allSignals.sort((a, b) => b.score - a.score)
   return allSignals.slice(0, maxSignals)
+}
+
+async function handleLiveScalping() {
+  try {
+    const answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'symbol',
+        message: 'Masukkan simbol coin (contoh: BTCUSDT):',
+        validate: (s) => s && s.length > 0,
+      },
+      {
+        type: 'input',
+        name: 'nominal',
+        message: 'Modal awal (USDT):',
+        validate: (v) => !isNaN(v) && v > 0,
+      },
+      {
+        type: 'input',
+        name: 'riskPercent',
+        message: 'Risiko per trade (% dari modal efektif):',
+        default: '1',
+        validate: (v) => v > 0 && v <= 5,
+      },
+      {
+        type: 'input',
+        name: 'timeframe',
+        message: 'Timeframe prediksi (menit):',
+        default: '15',
+        validate: (v) => [5, 15, 30, 60].includes(parseInt(v)),
+      },
+    ])
+
+    const symbol = answers.symbol.toUpperCase()
+    const nominal = parseFloat(answers.nominal)
+    const riskPercent = parseFloat(answers.riskPercent)
+    const timeframe = parseInt(answers.timeframe)
+
+    // Prediksi arah jangka pendek
+    const prediction = await predictDirection(symbol, timeframe)
+    if (!prediction) {
+      console.log('Tidak dapat memprediksi arah. Coba lagi nanti.')
+      return
+    }
+
+    console.log(`Prediksi ${timeframe} menit ke depan: ${prediction.direction} (Confidence: ${prediction.confidence.toFixed(2)})`)
+
+    // Mulai live scalping
+    await startLiveScalping(symbol, nominal, riskPercent, prediction)
+  } catch (err) {
+    console.error('Error:', err)
+  }
+}
+
+async function startLiveScalping(symbol, nominal, riskPercent, prediction) {
+  const state = {
+    symbol,
+    initialCapital: nominal,
+    currentCapital: nominal,
+    tradingCapital: nominal * 0.5, // Gunakan setengah modal
+    riskPercent,
+    position: null,
+    tradeCount: 0,
+    profit: 0,
+    feeRate: 0.0004, // Biaya transaksi 0.04% (Binance)
+  }
+
+  console.log(`Memulai live scalping ${symbol} dengan modal $${nominal}`)
+  console.log(`Modal trading: $${state.tradingCapital.toFixed(2)}`)
+
+  // Eksekusi order sesuai prediksi
+  if (prediction.direction === 'BULLISH') {
+    await openLongPosition(state, prediction.price, prediction.atr)
+  } else {
+    await openShortPosition(state, prediction.price, prediction.atr)
+  }
+
+  // Mulai monitoring posisi
+  monitorPosition(state)
 }
 
 menu()

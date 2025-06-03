@@ -62,8 +62,40 @@ function roundQuantity(quantity, stepSize) {
   return parseFloat(quantity.toFixed(precision))
 }
 
+async function closePosition(symbol, quantity) {
+  try {
+    // Cek posisi saat ini
+    const position = await futuresClient.futuresPositionRisk({ symbol: symbol.replace('USDT', '') })
+    const currentPosition = position.find((p) => p.symbol === symbol.replace('USDT', ''))
+
+    if (!currentPosition || parseFloat(currentPosition.positionAmt) === 0) {
+      console.log('No position to close')
+      return null
+    }
+
+    // Tentukan arah penutupan
+    const positionAmt = parseFloat(currentPosition.positionAmt)
+    if (positionAmt > 0) {
+      // Close long position
+      return await futuresClient.futuresMarketSell({
+        symbol: symbol.replace('USDT', ''),
+        quantity: Math.abs(positionAmt),
+      })
+    } else {
+      // Close short position
+      return await futuresClient.futuresMarketBuy({
+        symbol: symbol.replace('USDT', ''),
+        quantity: Math.abs(positionAmt),
+      })
+    }
+  } catch (err) {
+    throw new Error(`Failed to close position: ${err.response?.data?.msg || err.message}`)
+  }
+}
+
 module.exports = {
   setLeverage,
   buyFutures,
   sellFutures,
+  closePosition,
 }
