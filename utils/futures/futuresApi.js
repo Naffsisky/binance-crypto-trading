@@ -10,9 +10,7 @@ const futuresClient = Binance({
 // Fungsi untuk mendapatkan harga saat ini
 async function fetchCurrentPrice(symbol) {
   try {
-    const price = await futuresClient.futuresMarkPrice({
-      symbol: symbol.replace('USDT', ''),
-    })
+    const price = await futuresClient.futuresMarkPrice({ symbol })
     return parseFloat(price.markPrice)
   } catch (err) {
     console.error('Futures Price Error:', err.body || err.message)
@@ -24,11 +22,7 @@ async function fetchCurrentPrice(symbol) {
 async function fetchKlines(symbol, interval, limit = 500) {
   try {
     const response = await axios.get('https://fapi.binance.com/fapi/v1/klines', {
-      params: {
-        symbol: symbol.replace('USDT', ''),
-        interval,
-        limit,
-      },
+      params: { symbol, interval, limit },
     })
 
     return response.data.map((k) => ({
@@ -49,16 +43,21 @@ async function fetchKlines(symbol, interval, limit = 500) {
 // Fungsi untuk mendapatkan info exchange
 async function fetchExchangeInfo() {
   try {
-    const info = await futuresClient.futuresExchangeInfo()
-    return info
+    const response = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo')
+    return response.data
+  } catch (fallbackErr) {
+    const errorMsg = fallbackErr.response?.data?.msg || fallbackErr.message
+    throw new Error(`fetchExchangeInfo failed: ${errorMsg}`)
+  }
+}
+
+async function isSymbolValid(symbol) {
+  try {
+    const info = await fetchExchangeInfo()
+    return info.symbols.some((s) => s.symbol === symbol && s.status === 'TRADING')
   } catch (err) {
-    try {
-      const response = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo')
-      return response.data
-    } catch (fallbackErr) {
-      const errorMsg = fallbackErr.response?.data?.msg || fallbackErr.message
-      throw new Error(`fetchExchangeInfo failed: ${errorMsg}`)
-    }
+    console.error('Symbol validation error:', err)
+    return false
   }
 }
 
@@ -66,4 +65,5 @@ module.exports = {
   fetchCurrentPrice,
   fetchKlines,
   fetchExchangeInfo,
+  isSymbolValid,
 }

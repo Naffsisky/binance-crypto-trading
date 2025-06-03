@@ -5,8 +5,16 @@ const { calcEMA, calcRSI, calcATR } = require('./scalpIndicators')
 
 async function predictDirection(symbol, timeframe) {
   try {
+    const { isSymbolValid } = require('./futuresApi')
+    if (!(await isSymbolValid(symbol))) {
+      console.log(`[ERROR] ${symbol} tidak valid atau tidak aktif trading`)
+      return null
+    }
     const klines = await fetchKlines(symbol, `${timeframe}m`, 100)
-    if (klines.length < 50) return null
+    if (klines.length < 50) {
+      console.log(`[WARN] ${symbol}: Data tidak cukup (${klines.length} candle)`)
+      return null
+    }
 
     const closes = klines.map((k) => k.close)
     const highs = klines.map((k) => k.high)
@@ -15,7 +23,7 @@ async function predictDirection(symbol, timeframe) {
     const emaFast = calcEMA(closes, 9)
     const emaSlow = calcEMA(closes, 21)
     const rsi = calcRSI(closes, 14)
-    const atr = calcATR(klines, 14)
+    const atr = calcATR({ high: highs, low: lows, close: closes }, 14)
 
     const lastIndex = closes.length - 1
     const last = {
@@ -48,7 +56,7 @@ async function predictDirection(symbol, timeframe) {
       atr: last.atr,
     }
   } catch (err) {
-    console.error('Prediction error:', err)
+    console.error('Prediction error:', err.message || err)
     return null
   }
 }
