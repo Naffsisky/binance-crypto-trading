@@ -119,9 +119,19 @@ async function closePosition(symbol, quantity) {
   }
 }
 
+async function fetchExchangeInfo() {
+  try {
+    const response = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo')
+    return response.data
+  } catch (err) {
+    throw new Error(`fetchExchangeInfo failed: ${err.message}`)
+  }
+}
+
 module.exports = {
   setLeverage,
   buyFutures,
   sellFutures,
   closePosition,
+  fetchExchangeInfo,
 }

@@ -67,7 +67,7 @@ async function openLongPosition(state, entryPrice, atr) {
     const isMultiplierCoin = state.symbol.startsWith('1000')
 
     // Hitung leverage dengan aman
-    let leverage = 5 // Default untuk coin kecil
+    let leverage = 20 // Default untuk coin kecil
     const leverageRatio = atr / entryPrice
 
     if (leverageRatio > 0 && !isMultiplierCoin) {
