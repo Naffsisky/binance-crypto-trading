@@ -248,13 +248,11 @@ async function handleScalpingFutures() {
     const nominalTotal = parseFloat(answers.nominal)
     const maxPositions = parseInt(answers.maxPositions)
 
-    // Dapatkan semua simbol futures
     const info = await fetchExchangeInfo()
     const allSymbols = info.symbols.filter((s) => s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL').map((s) => s.symbol)
 
     console.log(`Memulai analisis ${allSymbols.length} simbol futures...`)
 
-    // Scan semua simbol dan dapatkan sinyal terbaik
     const topSignals = await scanTopSignals(allSymbols, maxPositions)
 
     if (topSignals.length === 0) {
@@ -262,17 +260,13 @@ async function handleScalpingFutures() {
       return
     }
 
-    // Eksekusi order
     const orders = []
     for (const signal of topSignals) {
       try {
-        // Hitung ukuran posisi dengan leverage
         const positionSize = calculatePositionSize(nominalTotal / topSignals.length, riskPercent, signal.price, signal.stopLoss, signal.leverage)
 
-        // Set leverage
         await setLeverage(signal.symbol, signal.leverage)
 
-        // Eksekusi order sesuai arah sinyal
         let orderResult
         if (signal.direction === 'BULLISH') {
           orderResult = await buyFutures(signal.symbol, positionSize)
@@ -306,7 +300,6 @@ async function handleScalpingFutures() {
       }
     }
 
-    // Tampilkan ringkasan
     console.log('\n=== Eksekusi Trading ===')
 
     if (orders.length === 0) {
@@ -323,7 +316,6 @@ async function handleScalpingFutures() {
         Skor: o.score.toFixed(2),
       }))
 
-      // Tampilkan tabel
       console.table(tableData)
     }
   } catch (err) {
@@ -331,11 +323,9 @@ async function handleScalpingFutures() {
   }
 }
 
-// Fungsi baru untuk scan sinyal terbaik
 async function scanTopSignals(symbols, maxSignals = 5) {
   const allSignals = []
 
-  // Batasi paralelisasi untuk hindari rate limit
   const BATCH_SIZE = 5
   for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
     const batch = symbols.slice(i, i + BATCH_SIZE)
@@ -353,7 +343,6 @@ async function scanTopSignals(symbols, maxSignals = 5) {
     console.log(`Proses: ${Math.min(i + BATCH_SIZE, symbols.length)}/${symbols.length} | Sinyal ditemukan: ${validSignals.length}`)
   }
 
-  // Urutkan dan ambil yang terbaik
   allSignals.sort((a, b) => b.score - a.score)
   return allSignals.slice(0, maxSignals)
 }

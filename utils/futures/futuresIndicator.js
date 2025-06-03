@@ -27,7 +27,6 @@ async function adjustStopLoss(symbol, position, priceData) {
   }
 }
 
-// Fungsi yang sudah ada
 const calcSMA = (values, period) => SMA.calculate({ period, values })
 
 const calcEMA = (values, period) => EMA.calculate({ period, values })
@@ -40,7 +39,6 @@ const calcBB = ({ values, period, stdDev }) => BollingerBands.calculate({ period
 
 const calcMACD = ({ values, fastPeriod, slowPeriod, signalPeriod, SimpleMAOscillator = false, SimpleMASignal = false }) => MACD.calculate({ values, fastPeriod, slowPeriod, signalPeriod, SimpleMAOscillator, SimpleMASignal })
 
-// Tambahkan fungsi yang hilang
 const calcATR = ({ high, low, close, period }) => ATR.calculate({ high, low, close, period })
 
 const calcVWAP = (highs, lows, closes, volumes) => {

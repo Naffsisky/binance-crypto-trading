@@ -6,11 +6,10 @@ const futuresClient = Binance({
   httpBase: 'https://fapi.binance.com',
 })
 
-// Perbaikan fungsi setLeverage
 async function setLeverage(symbol, leverage) {
   try {
     await futuresClient.futuresLeverage({
-      symbol: symbol.replace('USDT', ''),
+      symbol,
       leverage: parseInt(leverage),
     })
     return true
@@ -19,12 +18,16 @@ async function setLeverage(symbol, leverage) {
   }
 }
 
-// Fungsi order futures
 async function buyFutures(symbol, quantity) {
   try {
-    return await futuresClient.futuresMarketBuy({
-      symbol: symbol.replace('USDT', ''),
-      quantity: parseFloat(quantity.toFixed(4)),
+    const stepSize = await getStepSize(symbol)
+    const roundedQty = roundQuantity(quantity, stepSize)
+
+    return await futuresClient.futuresOrder({
+      symbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: roundedQty,
     })
   } catch (err) {
     throw new Error(`Gagal BUY: ${err.response?.data?.msg || err.message}`)
@@ -33,13 +36,30 @@ async function buyFutures(symbol, quantity) {
 
 async function sellFutures(symbol, quantity) {
   try {
-    return await futuresClient.futuresMarketSell({
-      symbol: symbol.replace('USDT', ''),
-      quantity: parseFloat(quantity.toFixed(4)),
+    const stepSize = await getStepSize(symbol)
+    const roundedQty = roundQuantity(quantity, stepSize)
+
+    return await futuresClient.futuresOrder({
+      symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: roundedQty,
     })
   } catch (err) {
     throw new Error(`Gagal SELL: ${err.response?.data?.msg || err.message}`)
   }
+}
+
+async function getStepSize(symbol) {
+  const exchangeInfo = await futuresClient.futuresExchangeInfo()
+  const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol)
+  const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE')
+  return parseFloat(lotSizeFilter.stepSize)
+}
+
+function roundQuantity(quantity, stepSize) {
+  const precision = Math.max(0, Math.floor(-Math.log10(stepSize)))
+  return parseFloat(quantity.toFixed(precision))
 }
 
 module.exports = {

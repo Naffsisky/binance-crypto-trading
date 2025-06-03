@@ -1,6 +1,4 @@
 const axios = require('axios')
-const API_KEY = process.env.BINANCE_API_KEY
-const API_SECRET = process.env.BINANCE_SECRET
 
 const BASE_URL = 'https://fapi.binance.com'
 
