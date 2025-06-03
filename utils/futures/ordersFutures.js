@@ -8,43 +8,69 @@ const futuresClient = Binance({
 
 async function setLeverage(symbol, leverage) {
   try {
-    await futuresClient.futuresLeverage({
-      symbol,
-      leverage: parseInt(leverage),
-    })
+    // Pastikan leverage berupa integer
+    leverage = parseInt(leverage)
+
+    // Gunakan simbol tanpa modifikasi
+    await futuresClient.futuresLeverage({ symbol, leverage })
     return true
   } catch (err) {
+    // Tangani error khusus untuk coin seperti 1000PEPEUSDT
+    if (err.message.includes('No such symbol')) {
+      try {
+        // Coba format tanpa angka depan
+        const altSymbol = symbol.replace(/^\d+/, '')
+        await futuresClient.futuresLeverage({ symbol: altSymbol, leverage })
+        console.log(`[LEVERAGE] Used alternative symbol: ${altSymbol}`)
+        return true
+      } catch (altErr) {
+        throw new Error(`Gagal set leverage: ${altErr.message}`)
+      }
+    }
     throw new Error(`Gagal set leverage: ${err.message}`)
   }
 }
 
 async function buyFutures(symbol, quantity) {
   try {
-    const stepSize = await getStepSize(symbol)
-    const roundedQty = roundQuantity(quantity, stepSize)
+    // Dapatkan info simbol untuk presisi quantity
+    const exchangeInfo = await fetchExchangeInfo()
+    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol)
 
-    return await futuresClient.futuresOrder({
-      symbol,
-      side: 'BUY',
-      type: 'MARKET',
-      quantity: roundedQty,
-    })
+    if (!symbolInfo) {
+      throw new Error(`Symbol info not found for ${symbol}`)
+    }
+
+    // Dapatkan filter lot size
+    const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE')
+    const stepSize = parseFloat(lotSizeFilter.stepSize)
+
+    // Hitung quantity dengan presisi yang benar
+    const precision = Math.max(0, Math.log10(1 / stepSize))
+    const adjustedQty = parseFloat(quantity.toFixed(precision))
+
+    return await futuresClient.futuresMarketBuy({ symbol, quantity: adjustedQty })
   } catch (err) {
     throw new Error(`Gagal BUY: ${err.response?.data?.msg || err.message}`)
   }
 }
 
+// Fungsi serupa untuk sellFutures
 async function sellFutures(symbol, quantity) {
   try {
-    const stepSize = await getStepSize(symbol)
-    const roundedQty = roundQuantity(quantity, stepSize)
+    const exchangeInfo = await fetchExchangeInfo()
+    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol)
 
-    return await futuresClient.futuresOrder({
-      symbol,
-      side: 'SELL',
-      type: 'MARKET',
-      quantity: roundedQty,
-    })
+    if (!symbolInfo) {
+      throw new Error(`Symbol info not found for ${symbol}`)
+    }
+
+    const lotSizeFilter = symbolInfo.filters.find((f) => f.filterType === 'LOT_SIZE')
+    const stepSize = parseFloat(lotSizeFilter.stepSize)
+    const precision = Math.max(0, Math.log10(1 / stepSize))
+    const adjustedQty = parseFloat(quantity.toFixed(precision))
+
+    return await futuresClient.futuresMarketSell({ symbol, quantity: adjustedQty })
   } catch (err) {
     throw new Error(`Gagal SELL: ${err.response?.data?.msg || err.message}`)
   }

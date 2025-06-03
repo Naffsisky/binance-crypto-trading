@@ -62,25 +62,42 @@ async function predictDirection(symbol, timeframe) {
 }
 
 async function openLongPosition(state, entryPrice, atr) {
-  const leverage = Math.min(20, Math.max(5, Math.floor(0.05 / (atr / entryPrice))))
-  await setLeverage(state.symbol, leverage)
+  try {
+    // Penanganan khusus untuk coin seperti 1000PEPEUSDT
+    const isMultiplierCoin = state.symbol.startsWith('1000')
 
-  const stopLoss = entryPrice - atr * 1.5
-  const positionSize = calculatePositionSize(state.tradingCapital, state.riskPercent, entryPrice, stopLoss, leverage)
+    // Hitung leverage dengan aman
+    let leverage = 5 // Default untuk coin kecil
+    const leverageRatio = atr / entryPrice
 
-  await buyFutures(state.symbol, positionSize)
+    if (leverageRatio > 0 && !isMultiplierCoin) {
+      leverage = Math.min(20, Math.max(5, Math.floor(0.05 / leverageRatio)))
+    }
 
-  state.position = {
-    type: 'LONG',
-    entryPrice,
-    quantity: positionSize,
-    leverage,
-    stopLoss,
-    highestProfit: 0,
-    openTime: Date.now(),
+    console.log(`[LEVERAGE] Setting leverage to ${leverage} for ${state.symbol}`)
+    await setLeverage(state.symbol, leverage)
+
+    const stopLoss = entryPrice - atr * 1.5
+    const positionSize = calculatePositionSize(state.tradingCapital, state.riskPercent, entryPrice, stopLoss, leverage)
+
+    console.log(`[ORDER] Buying ${positionSize.toFixed(8)} ${state.symbol}`)
+    await buyFutures(state.symbol, positionSize)
+
+    state.position = {
+      type: 'LONG',
+      entryPrice,
+      quantity: positionSize,
+      leverage,
+      stopLoss,
+      highestProfit: 0,
+      openTime: Date.now(),
+    }
+
+    console.log(`LONG position opened: ${positionSize.toFixed(8)} @ ${entryPrice}`)
+  } catch (err) {
+    console.error(`[ERROR] Failed to open LONG position: ${err.message}`)
+    throw err
   }
-
-  console.log(`LONG position opened: ${positionSize.toFixed(4)} @ ${entryPrice}`)
 }
 
 async function openShortPosition(state, entryPrice, atr) {
